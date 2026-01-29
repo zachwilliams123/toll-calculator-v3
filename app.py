@@ -10,7 +10,7 @@ import numpy_financial as npf
 st.set_page_config(page_title="Battery Toll Calculator | Modo Energy", layout="centered", initial_sidebar_state="collapsed")
 
 # Core parameters (Lisa's structure)
-CAPEX = 690          # €k/MW
+CAPEX = 610          # €k/MW
 OPEX = 10            # €k/MW/yr
 EURIBOR = 2.25       # %
 TOLL_TENOR = 7       # years
@@ -21,9 +21,9 @@ TARGET_BALLOON = 40  # % ("don't want more than 40% balloon")
 
 # Revenue data from Modo forecasts (€k/MW/year) - COD 2027
 REVENUE_DATA = {
-    'p99': [99, 83, 78, 74, 74, 74, 76, 75, 71, 73, 77, 80, 84, 84, 84],
-    'p50': [155, 129, 123, 119, 117, 118, 118, 117, 114, 115, 119, 119, 118, 114, 114],
-    'p1':  [211, 175, 169, 164, 161, 162, 161, 159, 158, 158, 161, 158, 152, 144, 144],
+'p99': [131, 65, 43, 37, 34, 32, 32, 32, 32, 31, 32, 34, 35, 36, 38],
+'p50': [208, 101, 67, 58, 54, 51, 51, 50, 50, 50, 50, 53, 52, 51, 51],
+'p1':  [284, 138, 91, 79, 74, 70, 70, 67, 68, 69, 69, 72, 69, 66, 65],
 }
 
 st.markdown("""
