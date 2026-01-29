@@ -60,7 +60,6 @@ st.markdown("""
     .result-badge {font-size: 9px; font-weight: 600; padding: 4px 10px; border-radius: 4px; background: rgba(255,255,255,0.2);}
     .result-footer {font-size: 12px; opacity: 0.85; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2);}
     
-    .dscr-note {font-size: 10px; color: #64748b; margin-bottom: 12px;}
     .footer {text-align: center; font-size: 10px; color: #94a3b8; margin-top: 12px; padding-top: 10px; border-top: 1px solid #f1f5f9;}
     
     div[data-testid="stNumberInput"] label {display: none !important;}
@@ -207,6 +206,7 @@ def calculate_project(toll_pct, toll_price, gearing):
 # Disclaimer & Header
 st.markdown('<div class="disclaimer">For educational purposes only</div>', unsafe_allow_html=True)
 st.markdown('<div class="header-row"><div class="main-title">Battery Toll Calculator</div><div class="brand-text">Modo Energy</div></div>', unsafe_allow_html=True)
+st.markdown('<p style="font-size: 13px; color: #64748b; margin-top: -12px; margin-bottom: 16px;">Explore how toll agreements enable higher leverage. Try setting 0% toll at 70% gearing—then increase toll % to see when it becomes feasible.</p>', unsafe_allow_html=True)
 
 left_col, right_col = st.columns([1, 1.1], gap="large")
 
@@ -216,7 +216,7 @@ with left_col:
     toll_price = st.number_input("price", 80, 140, 120, 5, label_visibility="collapsed")
     
     # Toll coverage
-    st.markdown('<div class="input-label">Toll %</div>', unsafe_allow_html=True)
+    st.markdown('<div class="input-label">Revenue under toll (%)</div>', unsafe_allow_html=True)
     toll_pct = st.slider("toll", 0, 100, 80, label_visibility="collapsed")
     
     # Gearing
