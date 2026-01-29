@@ -1,7 +1,6 @@
 """
-Battery Toll Calculator v24
-Mini-perm structure with 12yr sizing tenor, 7yr loan, 15yr project life
-Incorporates Lisa McDermott feedback on debt structuring
+Battery Toll Calculator v25
+Lisa McDermott structure: 14yr sizing, 7yr mini-perm, 40% balloon target
 """
 
 import streamlit as st
@@ -10,17 +9,17 @@ import numpy_financial as npf
 
 st.set_page_config(page_title="Battery Toll Calculator | Modo Energy", layout="centered", initial_sidebar_state="collapsed")
 
-# Core parameters
+# Core parameters (Lisa's structure)
 CAPEX = 625          # €k/MW
 OPEX = 10            # €k/MW/yr
 EURIBOR = 2.25       # %
 TOLL_TENOR = 7       # years
-SIZING_TENOR = 12    # years (warranty-linked)
+SIZING_TENOR = 14    # years (15yr warranty - 1yr buffer)
 LOAN_TENOR = 7       # years (mini-perm maturity)
 PROJECT_LIFE = 15    # years
+TARGET_BALLOON = 40  # % ("don't want more than 40% balloon")
 
 # Revenue data from Modo forecasts (€k/MW/year) - COD 2027
-# P99 = 99% exceed (low case for DSCR), P50 = median, P1 = 1% exceed (high case)
 REVENUE_DATA = {
     'p99': [99, 83, 78, 74, 74, 74, 76, 75, 71, 73, 77, 80, 84, 84, 84],
     'p50': [155, 129, 123, 119, 117, 118, 118, 117, 114, 115, 119, 119, 118, 114, 114],
@@ -88,7 +87,6 @@ def get_auto_gearing(toll_pct):
     return 45 + toll_pct * 0.35
 
 def get_dscr_target(toll_pct): 
-    # Higher toll = lower DSCR requirement (more certainty)
     return 1.80 - toll_pct * 0.005
 
 def get_margin_bps(toll_pct): 
@@ -96,21 +94,19 @@ def get_margin_bps(toll_pct):
 
 def calculate_project(toll_pct, toll_price, gearing):
     """
-    Calculate project financials with mini-perm debt structure.
+    Calculate project financials with Lisa's mini-perm structure.
     
-    Debt structure:
-    - Sized over 12 years (warranty-linked) with flat principal
-    - Loan matures at year 7 with ~42% balloon
-    - Balloon assumed refinanced; debt fully repaid by year 12
-    
-    DSCR tested across full 12-year sizing period (not just toll period).
+    Structure:
+    - 14yr sizing tenor (15yr warranty - 1yr buffer)
+    - 7yr loan maturity (mini-perm)
+    - 40% balloon at year 7, refinanced over years 8-14
     """
     dscr_target = get_dscr_target(toll_pct)
     margin_bps = get_margin_bps(toll_pct)
     all_in_rate = (EURIBOR + margin_bps / 100) / 100
     
-    # Capital structure (€k per MW)
-    debt = CAPEX * gearing / 100 * 1000  # Convert to €/MW
+    # Capital structure (€ per MW)
+    debt = CAPEX * gearing / 100 * 1000
     equity = CAPEX * 1000 - debt
     
     toll_fraction = toll_pct / 100
@@ -118,67 +114,75 @@ def calculate_project(toll_pct, toll_price, gearing):
     # Effective fixed revenue over sizing tenor
     effective_fixed_pct = (TOLL_TENOR / SIZING_TENOR) * toll_pct
     
-    # Balloon at year 7
-    balloon_pct = (SIZING_TENOR - LOAN_TENOR) / SIZING_TENOR * 100
+    # Balloon mechanics
+    balloon_at_7 = debt * TARGET_BALLOON / 100
+    principal_paid_1_7 = debt - balloon_at_7  # 60% of debt
+    principal_per_year_1_7 = principal_paid_1_7 / LOAN_TENOR
     
-    def build_revenue(forecast):
-        """Build annual revenue stream mixing toll and merchant."""
-        revenue = []
-        for i in range(PROJECT_LIFE):
-            if i < TOLL_TENOR:
-                # Toll period: weighted average of toll price and merchant
-                rev = toll_price * toll_fraction + forecast[i] * (1 - toll_fraction)
-            else:
-                # Post-toll: 100% merchant
-                rev = forecast[i]
-            revenue.append(rev * 1000)  # Convert to €/MW
-        return revenue
+
+    
+    # Years 8-14: amortize remaining 40% over 7 years
+    principal_per_year_8_14 = balloon_at_7 / (SIZING_TENOR - LOAN_TENOR)
     
     def build_debt_service():
-        """
-        Flat principal repayment over sizing tenor.
-        Interest calculated on declining balance.
-        """
+        """Build debt service schedule with sweep to 40% balloon."""
         if debt <= 0:
-            return [0] * SIZING_TENOR, [0] * SIZING_TENOR
+            return [0] * PROJECT_LIFE
         
-        principal_per_year = debt / SIZING_TENOR
         debt_service = []
         outstanding = debt
         
-        for i in range(SIZING_TENOR):
+        # Years 1-7: accelerated principal (sweep) + interest
+        for i in range(LOAN_TENOR):
             interest = outstanding * all_in_rate
-            ds = principal_per_year + interest
+            ds = principal_per_year_1_7 + interest
             debt_service.append(ds)
-            outstanding -= principal_per_year
+            outstanding -= principal_per_year_1_7
         
-        # Extend to project life (years 13-15 have no debt service)
-        debt_service_full = debt_service + [0] * (PROJECT_LIFE - SIZING_TENOR)
+        # Years 8-14: balloon amortization + interest
+        for i in range(SIZING_TENOR - LOAN_TENOR):
+            interest = outstanding * all_in_rate
+            ds = principal_per_year_8_14 + interest
+            debt_service.append(ds)
+            outstanding -= principal_per_year_8_14
         
-        return debt_service_full
+        # Year 15: no debt
+        debt_service.append(0)
+        
+        return debt_service
+    
+    def build_revenue(forecast):
+        """Build annual revenue mixing toll and merchant."""
+        revenue = []
+        for i in range(PROJECT_LIFE):
+            if i < TOLL_TENOR:
+                rev = toll_price * toll_fraction + forecast[i] * (1 - toll_fraction)
+            else:
+                rev = forecast[i]
+            revenue.append(rev * 1000)
+        return revenue
     
     debt_service = build_debt_service()
     
     def calc_scenario(forecast):
         """Calculate DSCR and IRR for a given revenue scenario."""
         revenue = build_revenue(forecast)
-        net_operating = [revenue[i] - OPEX * 1000 for i in range(PROJECT_LIFE)]
+        net_op = [revenue[i] - OPEX * 1000 for i in range(PROJECT_LIFE)]
         
-        # Equity cash flows
-        equity_cf = [net_operating[i] - debt_service[i] for i in range(PROJECT_LIFE)]
-        
-        # DSCR for each year of sizing tenor
+        # DSCRs for sizing period
         dscrs = []
         for i in range(SIZING_TENOR):
             if debt_service[i] > 0:
-                dscrs.append(net_operating[i] / debt_service[i])
+                dscrs.append(net_op[i] / debt_service[i])
             else:
                 dscrs.append(99)
         
         min_dscr = min(dscrs) if dscrs else 99
         min_dscr_year = dscrs.index(min_dscr) + 1 if dscrs else 0
         
-        # IRR calculation
+        # Equity cash flows
+        equity_cf = [net_op[i] - debt_service[i] for i in range(PROJECT_LIFE)]
+        
         try:
             irr = npf.irr([-equity] + equity_cf) * 100
             if np.isnan(irr) or irr < -50 or irr > 200:
@@ -190,7 +194,6 @@ def calculate_project(toll_pct, toll_price, gearing):
             'irr': irr,
             'min_dscr': min_dscr,
             'min_dscr_year': min_dscr_year,
-            'dscrs': dscrs,
         }
     
     low = calc_scenario(REVENUE_DATA['p99'])
@@ -200,11 +203,10 @@ def calculate_project(toll_pct, toll_price, gearing):
     return {
         'dscr_target': dscr_target,
         'all_in_rate': all_in_rate * 100,
-        'debt': debt / 1000,  # €k/MW
-        'equity': equity / 1000,  # €k/MW
+        'debt': debt / 1000,
+        'equity': equity / 1000,
         'debt_feasible': low['min_dscr'] >= dscr_target,
         'effective_fixed_pct': effective_fixed_pct,
-        'balloon_pct': balloon_pct,
         'low': low,
         'base': base,
         'high': high,
@@ -234,7 +236,7 @@ with left_col:
     st.markdown('<div class="input-label">Toll % (capacity)</div>', unsafe_allow_html=True)
     toll_pct = st.slider("toll", 0, 100, 80, label_visibility="collapsed")
     
-    # Calculate auto gearing based on current toll
+    # Calculate auto gearing
     auto_gearing = int(round(get_auto_gearing(toll_pct)))
     
     # Gearing
@@ -254,14 +256,14 @@ with left_col:
     st.markdown(f'<div class="capital-row">€{result["debt"]:.0f}k debt / €{result["equity"]:.0f}k equity per MW</div>', unsafe_allow_html=True)
     
     # Key insight: effective fixed %
-    st.markdown(f'<div class="effective-fixed"><strong>{result["effective_fixed_pct"]:.0f}%</strong> effective fixed revenue over debt sizing period</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="effective-fixed"><strong>{result["effective_fixed_pct"]:.0f}%</strong> effective fixed revenue over 14yr sizing</div>', unsafe_allow_html=True)
     
     st.markdown(f'''
     <div class="terms-row">
         <span class="term-chip"><strong>{result["dscr_target"]:.2f}×</strong> DSCR</span>
         <span class="term-chip"><strong>{result["all_in_rate"]:.1f}%</strong> rate</span>
         <span class="term-chip"><strong>7yr</strong> loan</span>
-        <span class="term-chip"><strong>{result["balloon_pct"]:.0f}%</strong> balloon</span>
+        <span class="term-chip"><strong>40%</strong> balloon</span>
     </div>
     ''', unsafe_allow_html=True)
 
@@ -279,7 +281,6 @@ with right_col:
     debt_badge = "FEASIBLE" if result['debt_feasible'] else "NOT FEASIBLE"
     dscr_margin = min_dscr - dscr_target
     
-    # Determine if min DSCR is in toll or merchant period
     period_label = "toll" if min_dscr_year <= TOLL_TENOR else "merchant"
     
     st.markdown(f'''
@@ -293,7 +294,7 @@ with right_col:
             <div class="result-badge">{debt_badge}</div>
         </div>
     </div>
-    <div class="dscr-note">DSCR tested against P99 revenue over 12yr sizing period</div>
+    <div class="dscr-note">DSCR tested against P99 over 14yr sizing period</div>
     ''', unsafe_allow_html=True)
     
     # Equity card
@@ -321,31 +322,30 @@ st.markdown('''
 <div class="method-content">
 
 <p><strong>Debt Structure (Mini-Perm)</strong><br>
-Debt sized over 12 years (warranty-linked) with flat principal repayment. Loan matures at year 7 with ~42% balloon, assumed refinanced. This structure allows higher initial leverage while maintaining bankable DSCRs.</p>
+Debt sized over 14 years (15yr warranty minus buffer). Loan matures at year 7 with 40% balloon, refinanced and amortized over years 8–14.</p>
 
 <p><strong>Revenue</strong><br>
 Years 1–7: (Toll price × Toll %) + (Modo P50 forecast × (1 − Toll %))<br>
 Years 8–15: 100% merchant</p>
 
 <p><strong>Effective Fixed %</strong><br>
-Fixed revenue as a share of the debt sizing period, not just the toll period. A 7-year toll over 12-year sizing = 58% effective coverage at most. This is what drives achievable leverage.</p>
+Fixed revenue as share of 14yr sizing period. Even 100% toll = only 50% effective coverage (7/14). This—not toll %—drives achievable leverage.</p>
 
 <p><strong>DSCR</strong><br>
-Tested against Modo P99 (low) case across full 12-year sizing period. Minimum DSCR typically falls in years 8-12 (merchant period with debt still outstanding).</p>
+Tested against Modo P99 (low) case across full 14yr sizing period. With 40% balloon target, minimum DSCR typically falls in toll period (constraint shifts from merchant years).</p>
 
 <p><strong>Equity IRR</strong><br>
-15-year horizon capturing full merchant tail post-debt. Range shows P99 (low) to P1 (high) scenarios.</p>
+15-year horizon. Range shows P99 to P1.</p>
 
 <p><strong>Glossary</strong><br>
-<strong>Mini-perm</strong> — Loan with shorter maturity than amortization schedule; balloon refinanced at maturity.<br>
-<strong>Sizing tenor</strong> — Period over which debt amortization is calculated (drives initial debt quantum).<br>
-<strong>Balloon</strong> — Principal remaining at loan maturity, requiring refinancing.</p>
+<strong>Mini-perm</strong> — Loan tenor (7yr) shorter than sizing tenor (14yr). Balloon refinanced at maturity.<br>
+<strong>Effective fixed</strong> — Toll coverage expressed over debt sizing period, not just toll tenor.</p>
 
 <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 12px 0;">
-<span style="font-size: 10px; color: #94a3b8;">€625k/MW CapEx · €10k/MW/yr OpEx · 2hr · 7yr toll · 12yr sizing · 15yr IRR · COD 2027</span>
+<span style="font-size: 10px; color: #94a3b8;">€625k/MW CapEx · €10k/MW OpEx · 2hr · 7yr toll · 14yr sizing · 40% balloon · 15yr IRR · COD 2027</span>
 
 </div>
 </details>
 ''', unsafe_allow_html=True)
 
-st.markdown('<div class="footer">2hr · 7yr toll · 12yr sizing (42% balloon at yr 7) · 15yr equity IRR · COD 2027 · Modo forecasts</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">2hr · 7yr toll/loan · 14yr sizing · 40% balloon · 15yr IRR · COD 2027 · Modo forecasts</div>', unsafe_allow_html=True)
