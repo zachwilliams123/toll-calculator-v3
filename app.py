@@ -45,8 +45,6 @@ st.markdown("""
     
     .capital-row {font-size: 12px; color: #64748b; margin: 4px 0 8px 0;}
     
-    .effective-fixed {font-size: 11px; color: #1e40af; background: #eff6ff; padding: 6px 10px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #bfdbfe;}
-    
     .terms-row {display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid #f1f5f9; margin-top: 8px;}
     .term-chip {font-size: 11px; color: #475569; background: #f8fafc; padding: 4px 8px; border-radius: 4px;}
     .term-chip strong {color: #1e293b;}
@@ -83,9 +81,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def get_auto_gearing(toll_pct): 
-    return 45 + toll_pct * 0.35
-
 def get_dscr_target(toll_pct): 
     return 1.80 - toll_pct * 0.005
 
@@ -110,9 +105,6 @@ def calculate_project(toll_pct, toll_price, gearing):
     equity = CAPEX * 1000 - debt
     
     toll_fraction = toll_pct / 100
-    
-    # Effective fixed revenue over sizing tenor
-    effective_fixed_pct = (TOLL_TENOR / SIZING_TENOR) * toll_pct
     
     # Balloon mechanics
     balloon_at_7 = debt * TARGET_BALLOON / 100
@@ -206,16 +198,11 @@ def calculate_project(toll_pct, toll_price, gearing):
         'debt': debt / 1000,
         'equity': equity / 1000,
         'debt_feasible': low['min_dscr'] >= dscr_target,
-        'effective_fixed_pct': effective_fixed_pct,
         'low': low,
         'base': base,
         'high': high,
     }
 
-
-# Session state
-if 'custom_gearing' not in st.session_state:
-    st.session_state.custom_gearing = 70
 
 # Disclaimer & Header
 st.markdown('<div class="disclaimer">For educational purposes only</div>', unsafe_allow_html=True)
@@ -224,46 +211,26 @@ st.markdown('<div class="header-row"><div class="main-title">Battery Toll Calcul
 left_col, right_col = st.columns([1, 1.1], gap="large")
 
 with left_col:
-    # Finance structure dropdown
-    st.markdown('<div class="input-label">Finance structure</div>', unsafe_allow_html=True)
-    mode = st.selectbox("mode", ["Standard", "Custom"], label_visibility="collapsed")
-    
     # Toll price
     st.markdown('<div class="input-label">Toll Price (€k/MW/yr)</div>', unsafe_allow_html=True)
     toll_price = st.number_input("price", 80, 140, 120, 5, label_visibility="collapsed")
     
     # Toll coverage
-    st.markdown('<div class="input-label">Toll % (capacity)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="input-label">Toll %</div>', unsafe_allow_html=True)
     toll_pct = st.slider("toll", 0, 100, 80, label_visibility="collapsed")
-    
-    # Calculate auto gearing
-    auto_gearing = int(round(get_auto_gearing(toll_pct)))
     
     # Gearing
     st.markdown('<div class="input-label">Gearing %</div>', unsafe_allow_html=True)
-    
-    if mode == "Standard":
-        gearing = st.slider("gearing", 30, 80, auto_gearing, disabled=True, 
-                           label_visibility="collapsed", key=f"gearing_std_{auto_gearing}")
-        gearing = auto_gearing
-    else:
-        gearing = st.slider("gearing", 30, 80, st.session_state.custom_gearing, 
-                           label_visibility="collapsed", key="gearing_custom")
-        st.session_state.custom_gearing = gearing
+    gearing = st.slider("gearing", 30, 85, 70, label_visibility="collapsed")
     
     result = calculate_project(toll_pct, toll_price, gearing)
     
     st.markdown(f'<div class="capital-row">€{result["debt"]:.0f}k debt / €{result["equity"]:.0f}k equity per MW</div>', unsafe_allow_html=True)
     
-    # Key insight: effective fixed %
-    st.markdown(f'<div class="effective-fixed"><strong>{result["effective_fixed_pct"]:.0f}%</strong> effective fixed revenue over 14yr sizing</div>', unsafe_allow_html=True)
-    
     st.markdown(f'''
     <div class="terms-row">
-        <span class="term-chip"><strong>{result["dscr_target"]:.2f}×</strong> DSCR</span>
+        <span class="term-chip"><strong>{result["dscr_target"]:.2f}×</strong> DSCR target</span>
         <span class="term-chip"><strong>{result["all_in_rate"]:.1f}%</strong> rate</span>
-        <span class="term-chip"><strong>7yr</strong> loan</span>
-        <span class="term-chip"><strong>40%</strong> balloon</span>
     </div>
     ''', unsafe_allow_html=True)
 
@@ -294,7 +261,6 @@ with right_col:
             <div class="result-badge">{debt_badge}</div>
         </div>
     </div>
-    <div class="dscr-note">DSCR tested against P99 over 14yr sizing period</div>
     ''', unsafe_allow_html=True)
     
     # Equity card
@@ -311,41 +277,35 @@ with right_col:
             </div>
             <div class="result-badge">{eq_badge}</div>
         </div>
-        <div class="result-footer">Range: {low_irr:.0f}% – {high_irr:.0f}% (P99 – P1)</div>
+        <div class="result-footer">Range: {low_irr:.0f}% – {high_irr:.0f}% (low – high)</div>
     </div>
     ''', unsafe_allow_html=True)
 
 # Methodology section
 st.markdown('''
 <details class="method-section">
-<summary class="method-header">Methodology & Assumptions</summary>
+<summary class="method-header">Methodology</summary>
 <div class="method-content">
 
-<p><strong>Debt Structure (Mini-Perm)</strong><br>
-Debt sized over 14 years (15yr warranty minus buffer). Loan matures at year 7 with 40% balloon, refinanced and amortized over years 8–14.</p>
+<p><strong>How debt works</strong><br>
+Lenders size debt based on the project's ability to service interest and principal from operating cash flow. The key metric is the debt service coverage ratio (DSCR): how many times over can the project pay its annual debt obligations?</p>
 
-<p><strong>Revenue</strong><br>
-Years 1–7: (Toll price × Toll %) + (Modo P50 forecast × (1 − Toll %))<br>
-Years 8–15: 100% merchant</p>
+<p>Higher toll coverage means more predictable revenue, so lenders accept a lower DSCR cushion. A fully merchant project needs ~1.8× coverage; a fully tolled project might only need ~1.3×. Lower coverage requirements mean more debt for the same cash flow.</p>
 
-<p><strong>Effective Fixed %</strong><br>
-Fixed revenue as share of 14yr sizing period. Even 100% toll = only 50% effective coverage (7/14). This—not toll %—drives achievable leverage.</p>
+<p><strong>Why toll enables leverage</strong><br>
+Toll doesn't create higher returns directly—it compresses the revenue distribution. But that stability lets lenders extend more debt. Higher debt means less equity required, and the same project profit spread across less equity means higher equity returns.</p>
 
-<p><strong>DSCR</strong><br>
-Tested against Modo P99 (low) case across full 14yr sizing period. With 40% balloon target, minimum DSCR typically falls in toll period (constraint shifts from merchant years).</p>
+<p><strong>The structure</strong><br>
+Debt is sized assuming a 14-year repayment period (matching typical battery warranties). The loan itself matures at year 7 with ~40% still outstanding, which gets refinanced. Revenue forecasts come from Modo's German market model—the calculator tests the low case to check if debt covenants hold, and shows returns across low, base, and high scenarios.</p>
 
-<p><strong>Equity IRR</strong><br>
-15-year horizon. Range shows P99 to P1.</p>
-
-<p><strong>Glossary</strong><br>
-<strong>Mini-perm</strong> — Loan tenor (7yr) shorter than sizing tenor (14yr). Balloon refinanced at maturity.<br>
-<strong>Effective fixed</strong> — Toll coverage expressed over debt sizing period, not just toll tenor.</p>
+<p><strong>What "not feasible" means</strong><br>
+If the DSCR falls below target in any year, lenders won't offer that structure. You'd need to reduce gearing until it passes—which is exactly why merchant projects can't achieve the same leverage as tolled ones.</p>
 
 <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 12px 0;">
-<span style="font-size: 10px; color: #94a3b8;">€625k/MW CapEx · €10k/MW OpEx · 2hr · 7yr toll · 14yr sizing · 40% balloon · 15yr IRR · COD 2027</span>
+<span style="font-size: 10px; color: #94a3b8;">€625k/MW CapEx · €10k/MW OpEx · 2hr duration · 7yr toll · 15yr project life · COD 2027</span>
 
 </div>
 </details>
 ''', unsafe_allow_html=True)
 
-st.markdown('<div class="footer">2hr · 7yr toll/loan · 14yr sizing · 40% balloon · 15yr IRR · COD 2027 · Modo forecasts</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">2hr duration · 7yr toll tenor · 15yr project life · COD 2027</div>', unsafe_allow_html=True)
