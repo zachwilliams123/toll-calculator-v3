@@ -10,7 +10,7 @@ import numpy_financial as npf
 st.set_page_config(page_title="Battery Toll Calculator | Modo Energy", layout="centered", initial_sidebar_state="collapsed")
 
 # Core parameters (Lisa's structure)
-CAPEX = 650          # €k/MW
+CAPEX = 690          # €k/MW
 OPEX = 10            # €k/MW/yr
 EURIBOR = 2.25       # %
 TOLL_TENOR = 7       # years
