@@ -1,6 +1,6 @@
 """
-Battery Toll Calculator v25
-Lisa McDermott structure: 14yr sizing, 7yr mini-perm, 40% balloon target
+Battery Toll Calculator v3
+Modo Energy - German BESS tolling structure analysis
 """
 
 import streamlit as st
@@ -9,21 +9,21 @@ import numpy_financial as npf
 
 st.set_page_config(page_title="Battery Toll Calculator | Modo Energy", layout="centered", initial_sidebar_state="collapsed")
 
-# Core parameters (Lisa's structure)
-CAPEX = 690          # €k/MW
+# Core parameters
+CAPEX = 690          # €k/MW (590 + 100 BKZ)
 OPEX = 10            # €k/MW/yr
 EURIBOR = 2.25       # %
 TOLL_TENOR = 7       # years
 SIZING_TENOR = 14    # years (15yr warranty - 1yr buffer)
 LOAN_TENOR = 7       # years (mini-perm maturity)
 PROJECT_LIFE = 15    # years
-TARGET_BALLOON = 40  # % ("don't want more than 40% balloon")
+TARGET_BALLOON = 40  # %
 
 # Revenue data from Modo forecasts (€k/MW/year) - COD 2027
 REVENUE_DATA = {
-'p99': [99, 83, 78, 74, 74, 74, 76, 75, 71, 73, 77, 80, 84, 84, 84],
-    'p50': [155, 129, 123, 119, 117, 118, 118, 117, 114, 115, 119, 119, 118, 114, 114],
-    'p1':  [211, 175, 169, 164, 161, 162, 161, 159, 158, 158, 161, 158, 152, 144, 144],
+    'low':  [99, 83, 78, 74, 74, 74, 76, 75, 71, 73, 77, 80, 84, 84, 84],
+    'base': [155, 129, 123, 119, 117, 118, 118, 117, 114, 115, 119, 119, 118, 114, 114],
+    'high': [211, 175, 169, 164, 161, 162, 161, 159, 158, 158, 161, 158, 152, 144, 144],
 }
 
 st.markdown("""
@@ -87,14 +87,7 @@ def get_margin_bps(toll_pct):
     return 280 - toll_pct * 0.80
 
 def calculate_project(toll_pct, toll_price, gearing):
-    """
-    Calculate project financials with Lisa's mini-perm structure.
-    
-    Structure:
-    - 14yr sizing tenor (15yr warranty - 1yr buffer)
-    - 7yr loan maturity (mini-perm)
-    - 40% balloon at year 7, refinanced over years 8-14
-    """
+    """Calculate project financials with mini-perm structure."""
     dscr_target = get_dscr_target(toll_pct)
     margin_bps = get_margin_bps(toll_pct)
     all_in_rate = (EURIBOR + margin_bps / 100) / 100
@@ -107,23 +100,19 @@ def calculate_project(toll_pct, toll_price, gearing):
     
     # Balloon mechanics
     balloon_at_7 = debt * TARGET_BALLOON / 100
-    principal_paid_1_7 = debt - balloon_at_7  # 60% of debt
+    principal_paid_1_7 = debt - balloon_at_7
     principal_per_year_1_7 = principal_paid_1_7 / LOAN_TENOR
-    
-
-    
-    # Years 8-14: amortize remaining 40% over 7 years
     principal_per_year_8_14 = balloon_at_7 / (SIZING_TENOR - LOAN_TENOR)
     
     def build_debt_service():
-        """Build debt service schedule with sweep to 40% balloon."""
+        """Build debt service schedule with 40% balloon at year 7."""
         if debt <= 0:
             return [0] * PROJECT_LIFE
         
         debt_service = []
         outstanding = debt
         
-        # Years 1-7: accelerated principal (sweep) + interest
+        # Years 1-7: accelerated principal + interest
         for i in range(LOAN_TENOR):
             interest = outstanding * all_in_rate
             ds = principal_per_year_1_7 + interest
@@ -187,9 +176,9 @@ def calculate_project(toll_pct, toll_price, gearing):
             'min_dscr_year': min_dscr_year,
         }
     
-    low = calc_scenario(REVENUE_DATA['p99'])
-    base = calc_scenario(REVENUE_DATA['p50'])
-    high = calc_scenario(REVENUE_DATA['p1'])
+    low = calc_scenario(REVENUE_DATA['low'])
+    base = calc_scenario(REVENUE_DATA['base'])
+    high = calc_scenario(REVENUE_DATA['high'])
     
     return {
         'dscr_target': dscr_target,
@@ -211,15 +200,12 @@ st.markdown('<p style="font-size: 13px; color: #64748b; margin-top: -12px; margi
 left_col, right_col = st.columns([1, 1.1], gap="large")
 
 with left_col:
-    # Toll price
     st.markdown('<div class="input-label">Toll Price (€k/MW/yr)</div>', unsafe_allow_html=True)
     toll_price = st.number_input("price", 80, 140, 120, 5, label_visibility="collapsed")
     
-    # Toll coverage
     st.markdown('<div class="input-label">Revenue under toll (%)</div>', unsafe_allow_html=True)
     toll_pct = st.slider("toll", 0, 100, 80, label_visibility="collapsed")
     
-    # Gearing
     st.markdown('<div class="input-label">Gearing %</div>', unsafe_allow_html=True)
     gearing = st.slider("gearing", 30, 85, 70, label_visibility="collapsed")
     
@@ -243,7 +229,6 @@ with right_col:
     min_dscr_year = result['low']['min_dscr_year']
     dscr_target = result['dscr_target']
     
-    # Debt card
     debt_class = "pass" if result['debt_feasible'] else "fail"
     debt_badge = "FEASIBLE" if result['debt_feasible'] else "NOT FEASIBLE"
     dscr_margin = min_dscr - dscr_target
@@ -263,7 +248,6 @@ with right_col:
     </div>
     ''', unsafe_allow_html=True)
     
-    # Equity card
     eq_class = "pass" if low_irr >= hurdle else "warn" if base_irr >= hurdle else "fail"
     eq_badge = "MEETS HURDLE" if low_irr >= hurdle else "BASE MEETS HURDLE" if base_irr >= hurdle else "BELOW HURDLE"
     
@@ -287,22 +271,31 @@ st.markdown('''
 <summary class="method-header">Methodology</summary>
 <div class="method-content">
 
-<p><strong>How debt works</strong><br>
-Lenders size debt based on the project's ability to service interest and principal from operating cash flow. The key metric is the debt service coverage ratio (DSCR): how many times over can the project pay its annual debt obligations?</p>
+<p><strong>Capital</strong><br>
+CapEx: €590k/MW + €100k/MW grid connection (BKZ)<br>
+OpEx: €10k/MW/year</p>
 
-<p>Higher toll coverage means more predictable revenue, so lenders accept a lower DSCR cushion. A fully merchant project needs ~1.8× coverage; a fully tolled project might only need ~1.3×. Lower coverage requirements mean more debt for the same cash flow.</p>
+<p><strong>Debt structure</strong><br>
+Sizing tenor: 14 years (15yr warranty − 1yr buffer)<br>
+Loan maturity: 7 years (mini-perm)<br>
+Balloon at maturity: 40%, refinanced over years 8–14<br>
+Interest: EURIBOR (2.25%) + margin (2.0–2.8% depending on toll %)</p>
 
-<p><strong>Why toll enables leverage</strong><br>
-Toll doesn't create higher returns directly—it compresses the revenue distribution. But that stability lets lenders extend more debt. Higher debt means less equity required, and the same project profit spread across less equity means higher equity returns.</p>
+<p><strong>DSCR calculation</strong><br>
+DSCR = (Revenue − OpEx) / Debt Service<br>
+Target: 1.80× at 0% toll → 1.30× at 100% toll</p>
 
-<p><strong>The structure</strong><br>
-Debt is sized assuming a 14-year repayment period (matching typical battery warranties). The loan itself matures at year 7 with ~40% still outstanding, which gets refinanced. Revenue forecasts come from Modo's German market model—the calculator tests the low case to check if debt covenants hold, and shows returns across low, base, and high scenarios.</p>
+<p><strong>Revenue</strong><br>
+Toll period (yrs 1–7): (Toll price × Toll %) + (Merchant forecast × (1 − Toll %))<br>
+Merchant period (yrs 8–15): 100% merchant<br>
+Forecasts: Modo Energy German BESS model, COD 2027</p>
 
-<p><strong>What "not feasible" means</strong><br>
-If the DSCR falls below target in any year, lenders won't offer that structure. You'd need to reduce gearing until it passes—which is exactly why merchant projects can't achieve the same leverage as tolled ones.</p>
+<p><strong>Returns</strong><br>
+Equity IRR calculated over 15-year project life<br>
+Range shows low to high revenue scenarios</p>
 
 <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 12px 0;">
-<span style="font-size: 10px; color: #94a3b8;">€625k/MW CapEx · €10k/MW OpEx · 2hr duration · 7yr toll · 15yr project life · COD 2027</span>
+<span style="font-size: 10px; color: #94a3b8;">2hr duration · 7yr toll tenor · 15yr project life · COD 2027</span>
 
 </div>
 </details>
